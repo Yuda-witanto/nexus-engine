@@ -1,0 +1,7 @@
+flask
+shodan
+supabase
+requests
+ecdsa
+base58
+pycryptodome
