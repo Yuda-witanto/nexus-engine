@@ -2,10 +2,6 @@ from http.server import BaseHTTPRequestHandler
 import json, os, hashlib, math
 from collections import Counter
 
-SUPABASE_URL = os.environ.get('SUPABASE_URL')
-SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
-SHODAN_API_KEY = os.environ.get('SHODAN_API_KEY')
-
 def calculate_entropy(data):
     if not data: return 0
     freq = Counter(data)
@@ -17,6 +13,16 @@ class handler(BaseHTTPRequestHandler):
         try:
             import shodan
             from supabase import create_client
+            
+            SHODAN_API_KEY = os.environ.get('SHODAN_API_KEY', '')
+            SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
+            SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
+            
+            if not SHODAN_API_KEY:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'SHODAN_API_KEY not set'}).encode())
+                return
             
             api = shodan.Shodan(SHODAN_API_KEY)
             supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -31,31 +37,30 @@ class handler(BaseHTTPRequestHandler):
                         data = banner.get('data', '')
                         ent = calculate_entropy(data)
                         if ent > 3.0:
-                            supabase.table('servers').upsert({
-                                'ip': banner['ip_str'],
-                                'port': banner['port'],
-                                'organization': banner.get('org', 'Unknown'),
-                                'first_seen': banner.get('timestamp', ''),
-                                'last_seen': banner.get('timestamp', ''),
-                                'banner_hash': hashlib.sha256(data.encode()).hexdigest()[:16],
-                                'entropy': ent,
-                                'raw_banner': data
-                            }, on_conflict='ip').execute()
-                            total += 1
-                except Exception as e:
-                    print(f"Error: {e}")
-            
-            supabase.table('expedition_log').insert({
-                'action': 'SCAN',
-                'details': f'{total} new servers'
-            }).execute()
+                            try:
+                                supabase.table('servers').upsert({
+                                    'ip': banner['ip_str'],
+                                    'port': banner['port'],
+                                    'organization': banner.get('org', 'Unknown'),
+                                    'entropy': ent,
+                                    'raw_banner': data
+                                }, on_conflict='ip').execute()
+                                total += 1
+                            except: pass
+                except: pass
             
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(json.dumps({'success': True, 'new_servers': total}).encode())
+            self.wfile.write(json.dumps({
+                'success': True,
+                'new_servers': total,
+                'message': f'Found {total} ghost servers'
+            }).encode())
             
         except Exception as e:
             self.send_response(500)
+            self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({'error': str(e)}).encode())
